@@ -1,7 +1,7 @@
 name: Daily Facebook Post
 on:
   schedule:
-    - cron: "0 14 * * *"   # 14:00 UTC daily — change as you like
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 jobs:
@@ -13,8 +13,16 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - name: Post to Facebook Page
+
+      - name: Post to Facebook Page (or send completion email)
         run: python post_daily.py
         env:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+          START_DATE: "2025-10-09"     # <-- set your real start date (YYYY-MM-DD)
+          MAX_DAYS: "20"
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_TO:  ${{ secrets.EMAIL_TO }}
