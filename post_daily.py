@@ -1,6 +1,11 @@
 import os, sys, datetime, pathlib, requests, smtplib, ssl
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from zoneinfo import ZoneInfo
+now_toronto = datetime.datetime.now(ZoneInfo("America/Toronto"))
+if now_toronto.hour != 10:
+    print(f"Skipping run: local time is {now_toronto:%Y-%m-%d %H:%M}, not 10:00.")
+    sys.exit(0)
 
 load_dotenv()
 PAGE_ID = os.getenv("FB_PAGE_ID")
