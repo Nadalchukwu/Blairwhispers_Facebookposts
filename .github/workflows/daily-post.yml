@@ -1,7 +1,8 @@
 name: Daily Facebook Post
 on:
   schedule:
-    - cron: "0 14 * * *"
+    - cron: "0 14 * * *"  # 10:00 AM during EDT (UTC-4)
+    - cron: "0 15 * * *"  # 10:00 AM during EST (UTC-5)
   workflow_dispatch:
 
 jobs:
