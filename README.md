@@ -1,2 +1,2 @@
-# Blairwhispers
+# Blairswhispers
 Facebook Blairs Whispers Posts
