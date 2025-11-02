@@ -1,7 +1,7 @@
 import os, sys, datetime, pathlib, requests
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
-from PIL import Image, ImageDraw, ImageFont, ImageColor   # keep
+from PIL import Image, ImageDraw, ImageFont, ImageColor
 
 # ===============================
 # Config / Defaults
@@ -12,15 +12,23 @@ LINE_SPACING = 12          # line spacing
 FONT_SIZE    = 78          # base font size
 
 # ===============================
+# Helper: validate hex color strings
+# ===============================
+def safe_color(value: str, fallback: str) -> str:
+    """Return a valid color string or the fallback if invalid."""
+    try:
+        ImageColor.getrgb(value)
+        return value
+    except Exception:
+        return fallback
+
+# ===============================
 # Time guard (Toronto 10:00)
 # ===============================
 now_toronto = datetime.datetime.now(ZoneInfo("America/Toronto"))
 if now_toronto.hour != 10:
     print(f"Skipping run: local time is {now_toronto:%Y-%m-%d %H:%M}, not 10:00.")
     sys.exit(0)
-
-# (rest of your script: env, POSTS_FILE, BG/TEXT colors, render_image, post_photo, main)
-
 
 # =========================
 # Env / Vars
@@ -31,7 +39,8 @@ PAGE_ID    = os.getenv("FB_PAGE_ID")
 PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN")
 GRAPH      = "https://graph.facebook.com/v21.0"
 
-START_DATE = os.getenv("2025-11-02")  # e.g., "2025-10-09"
+# NOTE: default kept to 2025-11-02. Change here or via repository vars.
+START_DATE = os.getenv("START_DATE", "2025-11-02")
 if not START_DATE:
     print("START_DATE is not set; exiting.")
     sys.exit(0)
@@ -105,7 +114,7 @@ def render_image(text: str, out_path: str) -> None:
         line_heights.append(h)
     total_h = sum(line_heights) + (len(wrapped) - 1) * LINE_SPACING
 
-    # vertical centering
+    # vertical centering (clamp to MARGIN)
     y = max((IMG_H - total_h) // 2, MARGIN)
 
     # draw centered
@@ -126,10 +135,12 @@ def post_photo(photo_path: str, caption: str) -> None:
             "access_token": PAGE_TOKEN,
             "published": "true",
         }
-        r = requests.post(f"{GRAPH}/{PAGE_ID}/photos",
-                          data=data,
-                          files={"source": f},
-                          timeout=120)
+        r = requests.post(
+            f"{GRAPH}/{PAGE_ID}/photos",
+            data=data,
+            files={"source": f},
+            timeout=120
+        )
     r.raise_for_status()
     print("Photo post OK:", r.json())
 
