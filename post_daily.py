@@ -1,92 +1,145 @@
-import os, sys, datetime, pathlib, requests, smtplib, ssl
-from email.mime.text import MIMEText
+import os, sys, datetime, pathlib, requests
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
+from PIL import Image, ImageDraw, ImageFont, ImageColor   # keep
+
+# ===============================
+# Config / Defaults
+# ===============================
+IMG_W, IMG_H = 1200, 630   # FB-friendly size
+MARGIN       = 80          # px margin
+LINE_SPACING = 12          # line spacing
+FONT_SIZE    = 78          # base font size
+
+# ===============================
+# Time guard (Toronto 10:00)
+# ===============================
 now_toronto = datetime.datetime.now(ZoneInfo("America/Toronto"))
 if now_toronto.hour != 10:
     print(f"Skipping run: local time is {now_toronto:%Y-%m-%d %H:%M}, not 10:00.")
     sys.exit(0)
 
+# (rest of your script: env, POSTS_FILE, BG/TEXT colors, render_image, post_photo, main)
+
+
+# =========================
+# Env / Vars
+# =========================
 load_dotenv()
-PAGE_ID = os.getenv("FB_PAGE_ID")
+
+PAGE_ID    = os.getenv("FB_PAGE_ID")
 PAGE_TOKEN = os.getenv("FB_PAGE_TOKEN")
-GRAPH = "https://graph.facebook.com/v21.0"
+GRAPH      = "https://graph.facebook.com/v21.0"
 
-# ---- controls ----
-START_DATE = os.getenv("START_DATE")         # e.g., "2025-10-09"
-MAX_DAYS = int(os.getenv("MAX_DAYS", "20"))  # number of days to post
+START_DATE = os.getenv("2025-11-02")  # e.g., "2025-10-09"
+if not START_DATE:
+    print("START_DATE is not set; exiting.")
+    sys.exit(0)
 
-# ---- email (SMTP) config via env/secrets ----
-SMTP_HOST = os.getenv("SMTP_HOST")           # e.g., smtp.gmail.com
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER")           # your email address
-SMTP_PASS = os.getenv("SMTP_PASS")           # app password (Gmail) / account password (provider)
-EMAIL_TO  = os.getenv("EMAIL_TO", SMTP_USER) # where to send
-EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
+MAX_DAYS   = int(os.getenv("MAX_DAYS", "20"))
+POSTS_FILE = os.getenv("POSTS_FILE", "posts.txt")
+FONT_PATH  = os.getenv("FONT_PATH", "assets/font.ttf")
 
-def send_email(subject: str, body: str):
-    if not (SMTP_HOST and SMTP_USER and SMTP_PASS and EMAIL_TO):
-        print("Email not configured; skipping.")
-        return
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_FROM
-    msg["To"] = EMAIL_TO
-    ctx = ssl.create_default_context()
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-        s.starttls(context=ctx)
-        s.login(SMTP_USER, SMTP_PASS)
-        s.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
-    print(f"📧 Sent email to {EMAIL_TO}")
+BG_COLOR   = safe_color(os.getenv("BG_COLOR", "#b900ff"), "#b900ff")
+TEXT_COLOR = safe_color(os.getenv("TEXT_COLOR", "#FFFFFF"), "#FFFFFF")
 
-def pick_message(index: int, path="posts.txt") -> str:
-    lines = [ln.strip() for ln in pathlib.Path(path).read_text(encoding="utf-8").splitlines() if ln.strip()]
-    if index >= len(lines):
-        print("No unused lines left in posts.txt; skipping."); sys.exit(0)
-    msg = lines[index]
-    # ensure at least one brand tag present
-    if "#blairswhispers" not in msg.lower():
-        msg = msg.rstrip() + " #BlairsWhispers #Romance"
-    return msg
-
-def post_text(message: str) -> str:
-    r = requests.post(f"{GRAPH}/{PAGE_ID}/feed",
-                      data={"message": message, "access_token": PAGE_TOKEN},
-                      timeout=30)
-    r.raise_for_status()
-    res = r.json()
-    print("✅ Post successful:", res)
-    return res.get("id", "")
-
-if __name__ == "__main__":
-    if not START_DATE:
-        print("START_DATE not set; skipping."); sys.exit(0)
+# =========================
+# Helpers
+# =========================
+def day_index() -> int:
     start = datetime.date.fromisoformat(START_DATE)
-    today = datetime.date.today()
-    day_index = (today - start).days
+    return (now_toronto.date() - start).days
 
-    if day_index < 0:
-        print(f"Not started yet (starts {start})."); sys.exit(0)
-
-    # Post on days 0..MAX_DAYS-1
-    if 0 <= day_index < MAX_DAYS:
-        post_text(pick_message(day_index))
+def read_message(idx: int) -> str:
+    p = pathlib.Path(POSTS_FILE)
+    if not p.exists():
+        print(f"Posts file not found at {p.resolve()}")
         sys.exit(0)
-
-    # Send ONE email on the first day AFTER the last post (day_index == MAX_DAYS)
-    if day_index == MAX_DAYS:
-        last_post_date = start + datetime.timedelta(days=MAX_DAYS - 1)
-        subject = f"Blair’s Whispers: daily posts completed ({MAX_DAYS}/{MAX_DAYS})"
-        body = (
-            f"Hi,\n\nYour scheduled Facebook Page posts have finished.\n\n"
-            f"Start date: {start}\n"
-            f"Last post:  {last_post_date}\n"
-            f"Page ID:    {PAGE_ID}\n\n"
-            f"You can disable the workflow or extend MAX_DAYS/add more lines to posts.txt.\n"
-        )
-        send_email(subject, body)
-        print("Done. Completion email sent.")
+    lines = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if not lines:
+        print("Posts file is empty.")
         sys.exit(0)
+    if idx < 0 or idx >= min(len(lines), MAX_DAYS):
+        print(f"Done or out of range: idx={idx}, lines={len(lines)}, MAX_DAYS={MAX_DAYS}")
+        sys.exit(0)
+    return lines[idx]
 
-    # After MAX_DAYS, do nothing (no repeated emails)
-    print("Completed previously; no action today.")
+def render_image(text: str, out_path: str) -> None:
+    # Load font with fallback
+    try:
+        font = ImageFont.truetype(FONT_PATH, size=FONT_SIZE)
+    except Exception as e:
+        print(f"Could not load font at {FONT_PATH}: {e}. Using default font.")
+        font = ImageFont.load_default()
+
+    img  = Image.new("RGB", (IMG_W, IMG_H), BG_COLOR)
+    draw = ImageDraw.Draw(img)
+
+    max_width = IMG_W - 2 * MARGIN
+    wrapped = []
+
+    # simple wrapping by measuring each candidate line
+    for para in text.split("\n"):
+        if not para:
+            wrapped.append("")  # preserve blank lines
+            continue
+        line = ""
+        for word in para.split():
+            test = (line + " " + word).strip()
+            bbox = draw.textbbox((0, 0), test, font=font)
+            w = bbox[2] - bbox[0]
+            if w <= max_width:
+                line = test
+            else:
+                if line:
+                    wrapped.append(line)
+                line = word
+        if line:
+            wrapped.append(line)
+
+    # compute total text height
+    line_heights = []
+    for ln in wrapped:
+        bbox = draw.textbbox((0, 0), ln if ln else " ", font=font)
+        h = bbox[3] - bbox[1]
+        line_heights.append(h)
+    total_h = sum(line_heights) + (len(wrapped) - 1) * LINE_SPACING
+
+    # vertical centering
+    y = max((IMG_H - total_h) // 2, MARGIN)
+
+    # draw centered
+    for ln, h in zip(wrapped, line_heights):
+        display_text = ln if ln else " "
+        bbox = draw.textbbox((0, 0), display_text, font=font)
+        w = bbox[2] - bbox[0]
+        x = (IMG_W - w) // 2
+        draw.text((x, y), display_text, font=font, fill=TEXT_COLOR)
+        y += h + LINE_SPACING
+
+    img.save(out_path, format="PNG")
+
+def post_photo(photo_path: str, caption: str) -> None:
+    with open(photo_path, "rb") as f:
+        data = {
+            "caption": caption,
+            "access_token": PAGE_TOKEN,
+            "published": "true",
+        }
+        r = requests.post(f"{GRAPH}/{PAGE_ID}/photos",
+                          data=data,
+                          files={"source": f},
+                          timeout=120)
+    r.raise_for_status()
+    print("Photo post OK:", r.json())
+
+# =========================
+# Main
+# =========================
+if __name__ == "__main__":
+    idx = day_index()
+    message = read_message(idx)
+    out_name = f"out_{now_toronto:%Y%m%d}_{idx+1}.png"
+    render_image(message, out_name)
+    post_photo(out_name, message)
+    print("Done.")
